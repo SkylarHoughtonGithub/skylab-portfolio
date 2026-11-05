@@ -1,83 +1,83 @@
 ---
 name: 'Skylab'
-description: 'A self-hosted platform-engineering environment: Packer-baked images, Terraform-provisioned infra, Ansible configuration, custom container images, ArgoCD GitOps delivery, and a Backstage service catalog on top.'
+description: 'A homelab-based internal developer platform: Argo CD for delivery, Crossplane for cloud resources, KubeVela for application shape, and Backstage as the front door. One story across five public repos.'
 githubUrl: 'https://github.com/SkylarHoughtonGithub?tab=repositories&q=skylab'
 type: 'text'
-tags: ['Terraform', 'Ansible', 'Kubernetes', 'Docker', 'Crossplane', 'Python', 'TypeScript', 'GitHub Actions', 'Bash']
+tags: ['Kubernetes', 'Argo CD', 'Crossplane', 'KubeVela', 'Backstage', 'Terraform', 'Helm', 'GitHub Actions']
 featured: true
-date: 2025-09-05
-status: 'shipped'
+date: 2026-11-05
+status: 'in-progress'
 ---
 
 ## The problem
 
-Running personal infrastructure as a pile of ad-hoc shell scripts is fine until the day you need to rebuild it. More importantly, if you want reps on the same tools that run real platforms — IaC, GitOps, service catalogs, custom container images — you need somewhere to practice them end-to-end on your own hardware instead of in a toy sandbox.
+Personal infrastructure doesn't need an internal developer platform. Running an _actual_ platform on it does — with real tool boundaries, a GitOps audit log, a service catalog, and a story for how a workload actually gets to a cluster. The first iteration of Skylab mixed delivery, infrastructure, and application concerns across eight environment-split ApplicationSets and three argo-\* repos. It worked, but it couldn't absorb a new tool without touching every layer. The rework is a rebuild from clean layer boundaries.
 
 ## What I built
 
-A full self-hosted platform spread across a handful of repos, each one a distinct layer of the stack:
+Five public repos, one tenant source on an in-cluster Gitea, one deployment story per layer.
 
-| Layer           | Repo                                    | Role                                                                          |
-| --------------- | --------------------------------------- | ----------------------------------------------------------------------------- |
-| Image           | `skylab-packer`                         | Packer templates for base OS images                                           |
-| Infrastructure  | `skylab-terraform`                      | Terraform modules for compute, network, storage                               |
-| Configuration   | `skylab-ansible`                        | Ansible roles & playbooks for host configuration                              |
-| Delivery (CD)   | `skylab-argo-root` / `-workloads`       | ArgoCD GitOps for Kubernetes workloads                                        |
-| Bootstrap       | `skylab-argo-bootstrap`                 | Repeatable cluster + ArgoCD bootstrap                                         |
-| Workloads       | `shoutsky-images`                       | Custom container images + Kustomize manifests                                 |
-| Service catalog | `skylab-backstage-catalog` / `-configs` | Backstage software templates for self-service EKS provisioning via Crossplane |
+| Layer | Repo | Owns |
+| --- | --- | --- |
+| Delivery | [`skylab-gitops`](https://github.com/SkylarHoughtonGithub/skylab-gitops) | Everything Argo CD syncs: wrapper charts, cluster config, workloads |
+| Foundations | [`skylab-terraform`](https://github.com/SkylarHoughtonGithub/skylab-terraform) | AWS + GCP: OIDC, Roles Anywhere, buckets, trust anchor |
+| Infrastructure API | [`skylab-crossplane`](https://github.com/SkylarHoughtonGithub/skylab-crossplane) | Cloud-agnostic XRDs with AWS and GCP compositions, published as an OCI package |
+| Front door | [`skylab-backstage`](https://github.com/SkylarHoughtonGithub/skylab-backstage) | Catalog, golden-path templates, MCP actions for AI clients |
+| Remediation | [`tack-ai`](https://github.com/SkylarHoughtonGithub/tack-ai) | Policy-governed coding agent, tamper-evident audit |
 
-Each layer owns one job, and the handoffs are explicit. Packer produces images; Terraform consumes them; Ansible configures what Terraform can't; ArgoCD takes over inside the cluster and syncs the workload layer out of `shoutsky-images`; Backstage sits on top as a service catalog.
+Every layer has a "never touches" rule. Argo CD syncs Git state; it does not reconcile anything KubeVela renders downstream. Crossplane owns cloud resources; it does not install Helm releases. KubeVela describes application shape; it does not decide cluster placement. The discipline is the point — overlapping layers fight each other.
 
-## A decision I'd defend
+## A decision I'd defend: sync waves with the Application health check restored
 
-I committed to GitOps-first on day one via ArgoCD's app-of-apps pattern instead of using imperative `kubectl` for anything. It feels heavier than it needs to be for a homelab, and in the short term it absolutely is — you can't `kubectl apply` your way out of a problem. But the forcing function is the point: the entire cluster state lives in `skylab-argo-root`, so a recovery is `terraform apply` + `argocd app sync` and I'm back where I was, with no undocumented drift.
+Platform components have strict ordering (cert-manager before issuers, External Secrets Operator before ClusterSecretStores, Crossplane providers before the Configuration package, KubeVela before components, workloads last). Argo CD has sync waves for exactly this — but Argo CD 1.8 quietly dropped the built-in health check for `argoproj.io/Application` resources, which means a wave of Applications applies but never actually waits on downstream health. The fix is a Lua health hook in `argocd-cm`:
 
 ```yaml
-# skylab-argo-root/clusters/prod/backstage.yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: backstage-prod
-  namespace: argocd
+# argocd-cm — re-enables Application health assessment so sync waves actually wait
+resource.customizations.health.argoproj.io_Application: |
+  hs = {}
+  hs.status = "Progressing"
+  hs.message = ""
+  if obj.status ~= nil and obj.status.health ~= nil then
+    hs.status  = obj.status.health.status
+    hs.message = obj.status.health.message or ""
+  end
+  return hs
+```
+
+With that one hook, wave -2 (Argo CD self-managed) brings up the delivery plane, wave -1 brings up cert-manager + ESO, wave 0 brings up the trust layer, wave 1 brings up Crossplane + providers, wave 2 pins the `skylab-crossplane` Configuration, wave 3 is KubeVela, waves 4–6 are developer tools (Gitea, observability, Backstage), and wave 10 is workloads. A fresh cluster bootstraps deterministically — not "mostly in order."
+
+## A decision I'd defend: cluster-as-data instead of path-based environments
+
+Most Argo CD repos I've read have `envs/dev/` and `envs/prod/` folders with an ApplicationSet per folder. It scales poorly — a new cluster is a new folder and copied YAML, promotion is a two-folder edit, and the implicit "which cluster is this for" lives in paths.
+
+Skylab is one root ApplicationSet with a cluster generator. Each cluster is an Argo cluster `Secret` with labels (`cloud`, `region`, `env`, `role`). Per-cluster config is one YAML in `clusters/`. Values layer: `values.yaml` → `values-<env>.yaml` → `clusters/<name>.yaml` with `ignoreMissingValueFiles: true`.
+
+```yaml
+# bootstrap/root-applicationset.yaml — one generator, N clusters
 spec:
-  project: default
-  source:
-    repoURL: https://github.com/SkylarHoughtonGithub/skylab-argo-root
-    targetRevision: HEAD
-    path: apps/backstage/overlays/prod
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: backstage
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
+  generators:
+    - clusters: {}        # every cluster Secret becomes a generator parameter
+  template:
+    spec:
+      source:
+        repoURL: https://github.com/SkylarHoughtonGithub/skylab-gitops
+        path: charts/skylab-apps
+        helm:
+          valueFiles:
+            - values.yaml
+            - values-{{ metadata.labels.env }}.yaml
+            - ../../clusters/{{ name }}.yaml
+          ignoreMissingValueFiles: true
 ```
 
-## Workloads: owning the image layer
+Adding a new cluster is two files (one labeled `Secret` + one `clusters/<name>.yaml`). No ApplicationSet copies. Promotion from dev to prod is editing one line.
 
-A platform is only as useful as the workloads running on it, so I built out `shoutsky-images` as the workload layer ArgoCD syncs. Rather than consume upstream images with runtime env-var surgery, I bake configuration conventions into custom images — multi-stage, distroless, non-root, deterministic startup. The cost is maintenance (I own CVE patching for what I bake in), but secrets stay out of ConfigMaps and the image boots the same way every time regardless of what the orchestrator throws at it.
+## The rest of the decision log
 
-```dockerfile
-# shoutsky-images/svc/foo/Dockerfile — representative multi-stage distroless build
-FROM golang:1.23-alpine AS build
-WORKDIR /src
-COPY go.* ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/app ./cmd/app
-
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/app /app
-USER nonroot:nonroot
-ENTRYPOINT ["/app"]
-```
-
-## Beyond the stack: a custom controller
-
-Not everything the platform needs is upstream. The MikroTik router that handles DNS for the lab has no first-party Kubernetes integration, so I wrote one — a Python Kubernetes operator that watches `Service` and `Ingress` resources and reconciles DNS records on the router over its API. The Backstage service catalog on top is standard Backstage (TypeScript), configured per-environment via `skylab-backstage-configs`.
+More decisions are documented as ADRs in [`skylab-gitops/docs/adr/`](https://github.com/SkylarHoughtonGithub/skylab-gitops/tree/main/docs/adr) — wrapper chart per component (not one umbrella, not kustomize), OCI chart promotion (not branch-per-env), hub-and-spoke fleet with cloud-agnostic XRDs, one GitOps repo + tenants on Gitea, label placement now and Open Cluster Management later.
 
 ## Result
 
-A full homelab rebuild from zero is a chain of `packer build` → `terraform apply` → `ansible-playbook` → ArgoCD takeover, with workloads materializing from `shoutsky-images` the moment ArgoCD syncs. Drift gets caught automatically. The RHCE8 Ansible material baked into `skylab-ansible` doubles as study notes, which is why that repo picked up its only star.
+One command brings a cluster from empty to every wave healthy (`task dev:up`). New workloads are a Backstage golden-path template run that opens a PR against `platform/tenants`; Argo CD picks it up from there. A new EKS cluster is a `KubernetesCluster` XR with `cloud: aws`; the same XR with `cloud: gcp` becomes a GKE cluster. A Postgres dependency is a `postgres` KubeVela component that composes to RDS or CloudSQL by platform policy, never by developer choice.
+
+The first workload riding the golden path is [`mechatracker`](https://github.com/SkylarHoughtonGithub/mechatracker), which deploys as a KubeVela Application and gets its database through the Postgres XRD.
