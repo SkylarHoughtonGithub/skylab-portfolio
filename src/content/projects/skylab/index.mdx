@@ -17,13 +17,13 @@ Personal infrastructure doesn't need an internal developer platform. Running an 
 
 Five public repos, one tenant source on an in-cluster Gitea, one deployment story per layer.
 
-| Layer | Repo | Owns |
-| --- | --- | --- |
-| Delivery | [`skylab-gitops`](https://github.com/SkylarHoughtonGithub/skylab-gitops) | Everything Argo CD syncs: wrapper charts, cluster config, workloads |
-| Foundations | [`skylab-terraform`](https://github.com/SkylarHoughtonGithub/skylab-terraform) | AWS + GCP: OIDC, Roles Anywhere, buckets, trust anchor |
+| Layer              | Repo                                                                             | Owns                                                                           |
+| ------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Delivery           | [`skylab-gitops`](https://github.com/SkylarHoughtonGithub/skylab-gitops)         | Everything Argo CD syncs: wrapper charts, cluster config, workloads            |
+| Foundations        | [`skylab-terraform`](https://github.com/SkylarHoughtonGithub/skylab-terraform)   | AWS + GCP: OIDC, Roles Anywhere, buckets, trust anchor                         |
 | Infrastructure API | [`skylab-crossplane`](https://github.com/SkylarHoughtonGithub/skylab-crossplane) | Cloud-agnostic XRDs with AWS and GCP compositions, published as an OCI package |
-| Front door | [`skylab-backstage`](https://github.com/SkylarHoughtonGithub/skylab-backstage) | Catalog, golden-path templates, MCP actions for AI clients |
-| Remediation | [`tack-ai`](https://github.com/SkylarHoughtonGithub/tack-ai) | Policy-governed coding agent, tamper-evident audit |
+| Front door         | [`skylab-backstage`](https://github.com/SkylarHoughtonGithub/skylab-backstage)   | Catalog, golden-path templates, MCP actions for AI clients                     |
+| Remediation        | [`tack-ai`](https://github.com/SkylarHoughtonGithub/tack-ai)                     | Policy-governed coding agent, tamper-evident audit                             |
 
 Every layer has a "never touches" rule. Argo CD syncs Git state; it does not reconcile anything KubeVela renders downstream. Crossplane owns cloud resources; it does not install Helm releases. KubeVela describes application shape; it does not decide cluster placement. The discipline is the point — overlapping layers fight each other.
 
@@ -56,7 +56,7 @@ Skylab is one root ApplicationSet with a cluster generator. Each cluster is an A
 # bootstrap/root-applicationset.yaml — one generator, N clusters
 spec:
   generators:
-    - clusters: {}        # every cluster Secret becomes a generator parameter
+    - clusters: {} # every cluster Secret becomes a generator parameter
   template:
     spec:
       source:

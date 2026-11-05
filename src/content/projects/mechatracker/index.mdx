@@ -45,8 +45,7 @@ import type { paths } from '@mechatracker/shared/types'
 type CreateReq = paths['/v1/repairs']['post']['requestBody']['content']['application/json']
 type RepairCard = paths['/v1/repairs']['post']['responses']['201']['content']['application/json']
 
-export const useCreateRepair = () =>
-  useMutation({ mutationFn: (body: CreateReq) => api.POST('/v1/repairs', { body }) })
+export const useCreateRepair = () => useMutation({ mutationFn: (body: CreateReq) => api.POST('/v1/repairs', { body }) })
 ```
 
 ## A decision I undid: rip out the two early over-complications
@@ -57,6 +56,7 @@ The first pass picked DigitalOcean (Droplets + Managed Postgres + Spaces + DOCR,
 - **DigitalOcean** — Droplets + DOCR + Spaces was optimized for low egress on one provider, but it baked a hosting decision into the application. Rewrote the deployment to ride the Skylab platform: a KubeVela Application in [`skylab-gitops/workloads/mechatracker/`](https://github.com/SkylarHoughtonGithub/skylab-gitops/tree/main/workloads/mechatracker) with a sibling Crossplane-managed Postgres XR that composes to RDS on AWS or CloudSQL on GCP. Cloud choice is now a platform decision; mechatracker's manifests contain no cloud-specific fields.
 
 Both decisions are documented in-repo with the comparison that led to the original choice preserved alongside the reversal:
+
 - [`docs/architecture/auth.md`](https://github.com/SkylarHoughtonGithub/mechatracker/blob/main/docs/architecture/auth.md) — Clerk → Google OAuth
 - [`docs/architecture/hosting.md`](https://github.com/SkylarHoughtonGithub/mechatracker/blob/main/docs/architecture/hosting.md) — DigitalOcean → Skylab
 
