@@ -1,8 +1,8 @@
 <div align="center">
-  <img src="./public/logo.png" width="180" alt="shoutsky-portfolio logo" />
+  <img src="./public/logo.png" width="180" alt="skylab-portfolio logo" />
 </div>
 
-# shoutsky-portfolio
+# skylab-portfolio
 
 Personal portfolio site for Skylar Houghton — platform engineer.
 
